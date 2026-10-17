@@ -2,11 +2,19 @@
 
 Help people today. Teach robots tomorrow.
 
-**[Watch the 1 minute demo video](docs/demo.mp4)**
+## Watch the demo
 
-**[Watch the showcase video: the team, the app and the robot simulation (1:43)](docs/showcase.mp4)**
+**Showcase (1:43): the team, the app, and the same task done by a robot in simulation**
 
-**[Try it live on your phone](https://architecture-maintains-quarter-oregon.trycloudflare.com)** (open it in Safari or Chrome and allow the camera and microphone). The live app runs from the builder's laptop during judging, so it may be offline at other times. The demo video above always works.
+https://github.com/user-attachments/assets/2865a971-6d2c-41cb-9310-67cdb16feb66
+
+**The app in 1 minute: Expert mode and Guide mode**
+
+https://github.com/user-attachments/assets/e8731f72-bbcb-4dba-ab88-2b0378da4f83
+
+Full-quality files: [showcase.mp4](docs/showcase.mp4) · [demo.mp4](docs/demo.mp4)
+
+**[Try it live on your phone](https://architecture-maintains-quarter-oregon.trycloudflare.com)** (open it in Safari or Chrome and allow the camera and microphone). The live app runs from the builder's laptop during judging, so it may be offline at other times. The demo videos above always work.
 
 An expert records a hands on task once, talking through it. Apprentice turns that recording into a step by step guide. Anyone can then clip their phone to their chest and get live, spoken coaching while they do the task themselves: it watches their hands, checks each step against the expert's reference, catches mistakes and answers questions out loud. No screen and no buttons needed.
 
