@@ -1,4 +1,4 @@
-# Apprentice
+# Apprenta
 
 Help people today. Teach robots tomorrow.
 
@@ -7,6 +7,18 @@ An expert records a hands on task once, talking through it. Apprentice turns tha
 Every session becomes a robot learning episode. Expert demos show how a task should go. Guided attempts show how it goes wrong and gets fixed: hand trajectories, labelled frames, step boundaries, mistakes, corrections and spoken intent.
 
 Built at the Physical AI Hack, London, 17 October 2026.
+
+## Screens
+
+| Start | Record | Live guidance | Done |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/screens/1-start.jpg" width="190"> | <img src="docs/screens/2-record.jpg" width="190"> | <img src="docs/screens/3-guide.jpg" width="190"> | <img src="docs/screens/4-done.jpg" width="190"> |
+| One hub, three modes | One question per screen | The coach watches and speaks, the box follows the work | Every session becomes an episode |
+
+| Data | Step map | Episode |
+|:---:|:---:|:---:|
+| <img src="docs/screens/5-data.jpg" width="190"> | <img src="docs/screens/6-step-map.jpg" width="190"> | <img src="docs/screens/7-episode.jpg" width="190"> |
+| Every figure traces back to its episodes | Expert vs guided time and mistakes per step | Frames, steps, mistakes and raw data, ready to export |
 
 ## How it works
 
