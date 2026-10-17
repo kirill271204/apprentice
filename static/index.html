@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>Apprentice</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Apprentice</div>
+  <nav class="tabs">
+    <button data-view="record">Record</button>
+    <button data-view="guide" class="active">Guide</button>
+    <button data-view="data">Data</button>
+  </nav>
+  <span id="mode" class="pill"></span>
+</header>
+
+<!-- RECORD: the expert shows the task once -->
+<main id="view-record" class="view" hidden>
+  <section class="card">
+    <h2>Record an expert demo</h2>
+    <p class="muted">Mount the phone on your chest or head, show the task, and talk through every step out loud.</p>
+    <label class="field">What are you showing?
+      <input id="rec-title" placeholder="Build the LEGO car">
+    </label>
+  </section>
+
+  <div class="stage small">
+    <video id="rec-video" playsinline muted></video>
+    <canvas id="rec-overlay"></canvas>
+    <div class="stage-badge" id="rec-badge" hidden>REC <span id="rec-timer">0:00</span></div>
+    <div class="stage-empty" id="rec-empty">Camera off</div>
+  </div>
+
+  <section class="row">
+    <button id="rec-cam" class="btn">Start camera</button>
+    <button id="rec-go" class="btn primary" disabled>Start recording</button>
+  </section>
+  <p class="muted small" id="rec-info"></p>
+
+  <section class="card">
+    <h3>Or upload a video</h3>
+    <p class="muted">Recorded with the phone's camera app. Talk through the steps while filming.</p>
+    <input type="file" id="rec-file" accept="video/*">
+  </section>
+
+  <section id="rec-result" class="card" hidden>
+    <h2 id="res-title"></h2>
+    <p class="muted" id="res-summary"></p>
+    <div id="res-steps"></div>
+    <div class="row">
+      <button id="res-save" class="btn">Save edits</button>
+      <button id="res-use" class="btn primary">Guide someone with this</button>
+    </div>
+  </section>
+</main>
+
+<!-- GUIDE: live coaching for the person doing the task -->
+<main id="view-guide" class="view">
+  <section id="g-pick">
+    <section class="card">
+      <h2>What do you need help with?</h2>
+      <div id="g-list" class="list"></div>
+      <p class="muted small" id="g-empty" hidden>No guides yet. Record an expert demo first.</p>
+    </section>
+  </section>
+
+  <section id="g-live" hidden>
+    <div class="progress"><div id="g-bar"></div></div>
+    <div class="stage">
+      <video id="g-video" playsinline muted></video>
+      <canvas id="g-overlay"></canvas>
+      <div class="stage-top">
+        <span class="pill dark" id="g-stepno"></span>
+        <span class="pill dark" id="g-checking" hidden>Watching</span>
+      </div>
+      <figure class="ref" id="g-ref-wrap">
+        <img id="g-ref" alt="Expert reference for this step">
+        <figcaption>Expert</figcaption>
+      </figure>
+      <div class="feedback" id="g-feedback" hidden></div>
+    </div>
+    <section class="card step">
+      <h2 id="g-title"></h2>
+      <p id="g-instr"></p>
+      <p class="muted small" id="g-done"></p>
+    </section>
+    <section class="controls">
+      <button id="g-prev" class="btn" aria-label="Previous step">Back</button>
+      <button id="g-ask" class="btn primary mic">Hold to ask</button>
+      <button id="g-repeat" class="btn">Repeat</button>
+      <button id="g-next" class="btn" aria-label="Next step">Next</button>
+    </section>
+    <p class="muted small center" id="g-heard"></p>
+    <p class="muted small center">Hands free: say "Coach, ..." to ask, or "Coach, next", "repeat", "go back".</p>
+    <div class="center"><button id="g-stop" class="btn ghost">End session</button></div>
+  </section>
+
+  <section id="g-finish" class="card center" hidden>
+    <h2>All done</h2>
+    <p id="g-finish-text" class="muted"></p>
+    <div class="row center">
+      <button id="g-again" class="btn">Start another</button>
+      <button id="g-see-data" class="btn primary">See the data</button>
+    </div>
+  </section>
+</main>
+
+<!-- DATA: every session becomes a robot learning episode -->
+<main id="view-data" class="view" hidden>
+  <section class="metrics" id="d-totals"></section>
+  <section class="card">
+    <h2>Episodes</h2>
+    <p class="muted small">Expert demos show how it should go. Guided sessions show how it goes wrong and gets fixed.</p>
+    <div id="d-list" class="list"></div>
+  </section>
+  <section id="d-detail" class="card" hidden>
+    <div class="row between">
+      <h2 id="d-title"></h2>
+      <a id="d-export" class="btn primary" download>Export episode</a>
+    </div>
+    <section class="metrics" id="d-metrics"></section>
+    <h3>Step timeline</h3>
+    <div id="d-timeline" class="timeline"></div>
+    <div class="legend"><span class="sw ok"></span>clean <span class="sw warn"></span>mistake caught and corrected</div>
+    <h3>Hand trajectories (wrist)</h3>
+    <canvas id="d-traj" width="640" height="360"></canvas>
+    <h3>Labelled frames</h3>
+    <div id="d-frames" class="frames"></div>
+    <h3>Event log</h3>
+    <div id="d-events" class="events"></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
