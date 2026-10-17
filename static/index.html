@@ -3,137 +3,191 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#111111">
-<title>Apprentice</title>
+<meta name="theme-color" content="#0F1E3D">
+<title>Apprenta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">Apprentice</div>
-  <nav class="tabs">
-    <button data-view="record">Record</button>
-    <button data-view="guide" class="active">Guide</button>
-    <button data-view="data">Data</button>
-  </nav>
-  <span id="mode" class="pill"></span>
-</header>
 
-<!-- RECORD: the expert shows the task once -->
-<main id="view-record" class="view" hidden>
-  <section class="card">
-    <h2>Record an expert demo</h2>
-    <p class="muted">Mount the phone on your chest or head, show the task, and talk through every step out loud.</p>
-    <label class="field">What are you showing?
-      <input id="rec-title" placeholder="Build the LEGO car">
-    </label>
-  </section>
-
-  <div class="stage small">
-    <video id="rec-video" playsinline muted></video>
-    <canvas id="rec-overlay"></canvas>
-    <div class="stage-badge" id="rec-badge" hidden>REC <span id="rec-timer">0:00</span></div>
-    <div class="stage-empty" id="rec-empty">Camera off</div>
+<!-- ============ START ============ -->
+<section id="scr-start" class="screen navy">
+  <canvas id="contours" aria-hidden="true"></canvas>
+  <div class="start-top">
+    <button id="logo" class="logo" aria-label="Apprenta">
+      <span class="mark">a</span><span class="word">apprenta</span>
+    </button>
+    <p class="tagline">Learn from the masters.</p>
   </div>
+  <div class="start-actions">
+    <button id="go-record" class="btn primary rise">Record an expert demo</button>
+    <button id="go-guide" class="btn secondary rise">Guide me</button>
+    <p id="guide-hint" class="caption center" hidden>Record a demo first</p>
+    <button id="go-data" class="btn text rise"><span class="grid-ico" aria-hidden="true"></span>Data</button>
+    <p id="totals" class="caption center"></p>
+  </div>
+</section>
 
-  <section class="row">
-    <button id="rec-cam" class="btn">Start camera</button>
-    <button id="rec-go" class="btn primary" disabled>Start recording</button>
-  </section>
-  <p class="muted small" id="rec-info"></p>
+<!-- ============ RECORD ============ -->
+<section id="scr-r-details" class="screen navy pad" hidden>
+  <header class="bar"><div class="dots" id="r-dots"><i></i><i></i><i></i></div><button class="close" data-close aria-label="Close">×</button></header>
+  <div class="q" data-q="0">
+    <h1 class="title">What are you showing?</h1>
+    <input id="r-title" class="field" placeholder="e.g. Changing the batteries in a TV remote" autocomplete="off">
+    <div id="r-chips" class="chips"></div>
+  </div>
+  <div class="q" data-q="1" hidden>
+    <h1 class="title">What's it on?</h1>
+    <input id="r-hw" class="field" placeholder="e.g. Samsung BN59 remote" autocomplete="off">
+  </div>
+  <div class="q" data-q="2" hidden>
+    <h1 class="title">Who's demonstrating?</h1>
+    <input id="r-who" class="field" placeholder="Name or role (optional)" autocomplete="off">
+    <label class="toggle"><input type="checkbox" id="r-audio" checked><span></span>Include audio narration</label>
+  </div>
+  <div class="q" data-q="3" hidden>
+    <h1 class="title">Ready to record</h1>
+    <div class="card summary" id="r-summary"></div>
+  </div>
+  <div class="foot">
+    <button id="r-next" class="btn primary">Next</button>
+    <button id="r-upload-btn" class="btn text" hidden>Upload a video instead</button>
+    <input type="file" id="r-file" accept="video/*" hidden>
+  </div>
+</section>
 
-  <section class="card">
-    <h3>Or upload a video</h3>
-    <p class="muted">Recorded with the phone's camera app. Talk through the steps while filming.</p>
-    <input type="file" id="rec-file" accept="video/*">
-  </section>
+<section id="scr-r-capture" class="screen camera" hidden>
+  <video id="rec-video" playsinline muted></video>
+  <canvas id="rec-overlay"></canvas>
+  <div class="inset-frame"></div>
+  <div class="cam-top"><span class="label" id="rec-timer">00:00</span><button class="close on-cam" data-close aria-label="Close">×</button></div>
+  <p id="rec-prompt" class="cam-prompt">Talk through each step as you go.</p>
+  <div class="cam-bottom">
+    <button id="rec-go" class="rec-btn" aria-label="Start recording"><span></span></button>
+  </div>
+</section>
 
-  <section id="rec-result" class="card" hidden>
-    <h2 id="res-title"></h2>
-    <p class="muted" id="res-summary"></p>
-    <div id="res-steps"></div>
-    <div class="row">
-      <button id="res-save" class="btn">Save edits</button>
-      <button id="res-use" class="btn primary">Guide someone with this</button>
+<section id="scr-r-processing" class="screen navy pad center-col" hidden>
+  <img id="p-thumb" class="p-thumb" alt="">
+  <ul class="stages" id="p-stages">
+    <li>Uploading</li><li>Transcribing narration</li><li>Finding the steps</li><li>Picking keyframes</li><li>Learning the hardware</li>
+  </ul>
+  <p id="p-error" class="caption center" hidden></p>
+</section>
+
+<section id="scr-r-review" class="screen navy pad" hidden>
+  <header class="bar"><span class="label">Review the guide</span><button class="close" data-close aria-label="Close">×</button></header>
+  <h1 class="title" id="rv-title"></h1>
+  <p class="sub" id="rv-hw"></p>
+  <div id="rv-steps" class="rows"></div>
+  <div class="foot">
+    <button id="rv-save" class="btn primary">Save guide</button>
+    <button id="rv-redo" class="btn text">Re-record</button>
+  </div>
+</section>
+
+<section id="scr-r-saved" class="screen navy pad center-col" hidden>
+  <svg class="big-tick" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54"/><path d="M36 62 l16 16 l32 -36"/></svg>
+  <h1 class="display">Guide saved</h1>
+  <p class="sub" id="sv-sub"></p>
+  <div class="foot wide">
+    <button id="sv-try" class="btn primary">Try it in Guide mode</button>
+    <button class="btn text" data-close>Back to start</button>
+  </div>
+</section>
+
+<!-- ============ GUIDE ============ -->
+<section id="scr-g-choose" class="screen navy pad" hidden>
+  <header class="bar"><span class="label">Guide me</span><button class="close" data-close aria-label="Close">×</button></header>
+  <h1 class="title">What do you need help with?</h1>
+  <div id="g-list" class="rows"></div>
+</section>
+
+<section id="scr-g-live" class="screen camera" hidden>
+  <video id="g-video" playsinline muted></video>
+  <canvas id="g-overlay"></canvas>
+  <div id="g-box" class="obox searching" hidden><span class="otab" id="g-box-label"></span><span class="otick" aria-hidden="true"></span></div>
+  <div class="live-top">
+    <div class="segs" id="g-segs"></div>
+    <div class="live-row">
+      <span class="label"><span id="g-stepno">STEP 1 / 1</span> <i id="g-checking" class="pulse" hidden></i></span>
+      <button class="close on-cam" id="g-stop" aria-label="End session">×</button>
     </div>
-  </section>
-</main>
-
-<!-- GUIDE: live coaching for the person doing the task -->
-<main id="view-guide" class="view">
-  <section id="g-pick">
-    <section class="card">
-      <h2>What do you need help with?</h2>
-      <div id="g-list" class="list"></div>
-      <p class="muted small" id="g-empty" hidden>No guides yet. Record an expert demo first.</p>
-    </section>
-  </section>
-
-  <section id="g-live" hidden>
-    <div class="progress"><div id="g-bar"></div></div>
-    <div class="stage">
-      <video id="g-video" playsinline muted></video>
-      <canvas id="g-overlay"></canvas>
-      <div class="stage-top">
-        <span class="pill dark" id="g-stepno"></span>
-        <span class="pill dark" id="g-checking" hidden>Watching</span>
-      </div>
-      <figure class="ref" id="g-ref-wrap">
-        <img id="g-ref" alt="Expert reference for this step">
-        <figcaption>Expert</figcaption>
-      </figure>
-      <div class="feedback" id="g-feedback" hidden></div>
+  </div>
+  <div class="live-bottom">
+    <p id="g-heard" class="caption cam"></p>
+    <div class="ibar" id="g-ibar">
+      <p id="g-instr" class="instruction"></p>
+      <img id="g-ref" class="kthumb" alt="Expert keyframe">
     </div>
-    <section class="card step">
-      <h2 id="g-title"></h2>
-      <p id="g-instr"></p>
-      <p class="muted small" id="g-done"></p>
-    </section>
-    <section class="controls">
-      <button id="g-prev" class="btn" aria-label="Previous step">Back</button>
-      <button id="g-ask" class="btn primary mic">Hold to ask</button>
-      <button id="g-repeat" class="btn">Repeat</button>
-      <button id="g-next" class="btn" aria-label="Next step">Next</button>
-    </section>
-    <p class="muted small center" id="g-heard"></p>
-    <p class="muted small center">Hands free: say "Coach, ..." to ask, or "Coach, next", "repeat", "go back".</p>
-    <div class="center"><button id="g-stop" class="btn ghost">End session</button></div>
-  </section>
+    <p class="caption cam center" id="g-hint">Say "Coach, …" to ask · swipe to skip</p>
+    <button id="g-ask" class="ask-btn" aria-label="Hold to ask">Hold to ask</button>
+  </div>
+  <div id="g-expert" class="expert-full" hidden><img id="g-expert-img" alt="Expert keyframe"><span class="label">EXPERT</span></div>
+</section>
 
-  <section id="g-finish" class="card center" hidden>
-    <h2>All done</h2>
-    <p id="g-finish-text" class="muted"></p>
-    <div class="row center">
-      <button id="g-again" class="btn">Start another</button>
-      <button id="g-see-data" class="btn primary">See the data</button>
-    </div>
-  </section>
-</main>
+<section id="scr-g-done" class="screen navy pad center-col" hidden>
+  <svg class="big-tick" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54"/><path d="M36 62 l16 16 l32 -36"/></svg>
+  <h1 class="display">Done.</h1>
+  <p class="sub" id="gd-time"></p>
+  <div class="card added">
+    <p class="label">Episode added to your data</p>
+    <p class="body" id="gd-text"></p>
+    <button id="gd-view" class="btn primary">View in Dashboard</button>
+  </div>
+  <button class="btn text" data-close>Back to start</button>
+</section>
 
-<!-- DATA: every session becomes a robot learning episode -->
-<main id="view-data" class="view" hidden>
-  <section class="metrics" id="d-totals"></section>
-  <section class="card">
-    <h2>Episodes</h2>
-    <p class="muted small">Expert demos show how it should go. Guided sessions show how it goes wrong and gets fixed.</p>
-    <div id="d-list" class="list"></div>
-  </section>
-  <section id="d-detail" class="card" hidden>
-    <div class="row between">
-      <h2 id="d-title"></h2>
-      <a id="d-export" class="btn primary" download>Export episode</a>
+<!-- ============ DATA ============ -->
+<section id="scr-data" class="screen navy pad scroll" hidden>
+  <header class="bar"><span class="label">Data</span><button class="close" data-close aria-label="Close">×</button></header>
+  <div id="d-overview">
+    <div class="chips" id="d-filter">
+      <button class="chip sel" data-f="all">All</button><button class="chip" data-f="expert">Expert</button><button class="chip" data-f="novice">Guided</button>
     </div>
-    <section class="metrics" id="d-metrics"></section>
-    <h3>Step timeline</h3>
-    <div id="d-timeline" class="timeline"></div>
-    <div class="legend"><span class="sw ok"></span>clean <span class="sw warn"></span>mistake caught and corrected</div>
-    <h3>Hand trajectories (wrist)</h3>
-    <canvas id="d-traj" width="640" height="360"></canvas>
-    <h3>Labelled frames</h3>
-    <div id="d-frames" class="frames"></div>
-    <h3>Event log</h3>
-    <div id="d-events" class="events"></div>
-  </section>
-</main>
+    <div class="figures" id="d-figs"></div>
+    <p class="label dim">Episodes</p>
+    <div class="strip" id="d-strip"></div>
+    <div class="row-between"><p class="label dim">By task</p><a class="btn text" href="/api/export_all" download>Export all</a></div>
+    <div class="rows" id="d-tasks"></div>
+    <div class="empty" id="d-empty" hidden>
+      <svg viewBox="0 0 120 80" aria-hidden="true"><rect x="10" y="10" width="100" height="60" rx="6"/><path d="M30 50 l20 -16 l16 12 l24 -20"/></svg>
+      <p class="body">No episodes yet. Record a demo to begin.</p>
+      <button class="btn primary" id="d-empty-rec">Record</button>
+    </div>
+  </div>
+  <div id="d-task" hidden>
+    <button class="btn text back" id="d-task-back">‹ All data</button>
+    <h1 class="title" id="dt-title"></h1>
+    <p class="sub" id="dt-hw"></p>
+    <p class="label dim">Step map</p>
+    <div class="stepmap" id="dt-map"></div>
+    <div class="legend"><span><i class="lg exp"></i>Expert time</span><span><i class="lg gui"></i>Guided time</span></div>
+    <div class="row-between"><p class="label dim">Source episodes</p><a class="btn text" href="/api/export_all" download>Export all</a></div>
+    <div class="rows" id="dt-eps"></div>
+  </div>
+  <div id="d-ep" hidden>
+    <button class="btn text back" id="d-ep-back">‹ Back</button>
+    <h1 class="title" id="de-title"></h1>
+    <div class="player">
+      <img id="de-frame" alt="">
+      <input type="range" id="de-scrub" min="0" max="0" value="0" aria-label="Scrub frames">
+      <div class="ticks" id="de-ticks"></div>
+    </div>
+    <div class="kv" id="de-kv"></div>
+    <p class="label dim">Hand trajectories</p>
+    <canvas id="de-traj" class="traj" width="720" height="420"></canvas>
+    <p class="label dim">Labelled frames</p>
+    <div class="lframes" id="de-frames"></div>
+    <p class="label dim">Event log</p>
+    <div class="events" id="de-events"></div>
+    <div class="row-between"><p class="label dim">Record</p><button class="chip" id="de-raw-btn">RAW</button></div>
+    <pre id="de-raw" class="raw" hidden></pre>
+    <a id="de-export" class="btn text" download>Export episode</a>
+  </div>
+</section>
 
 <div id="toast" class="toast" hidden></div>
 <script type="module" src="app.js"></script>

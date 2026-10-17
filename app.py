@@ -75,7 +75,7 @@ def _new_id():
     return time.strftime("%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
-async def _finish_build(frames_bytes, frame_times, audio_bytes, audio_name, title, hands, source):
+async def _finish_build(frames_bytes, frame_times, audio_bytes, audio_name, title, hands, source, hardware="", demonstrator=""):
     pid = _new_id()
     fdir = PROCS / pid / "frames"
     fdir.mkdir(parents=True)
@@ -88,7 +88,8 @@ async def _finish_build(frames_bytes, frame_times, audio_bytes, audio_name, titl
         transcript = await ai.transcribe(audio_bytes, audio_name, timestamps=True)
 
     proc = await ai.build_procedure([ai.b64(f) for f in frames_bytes], frame_times, transcript, title)
-    proc.update({"id": pid, "created": time.time(), "n_frames": len(frames_bytes), "source": source, "mock": ai.mock_mode()})
+    proc.update({"id": pid, "created": time.time(), "n_frames": len(frames_bytes), "source": source, "mock": ai.mock_mode(),
+                 "hardware": hardware, "demonstrator": demonstrator, "frame_times": frame_times})
     _write(_proc_path(pid), proc)
 
     # The expert recording is itself a demonstration episode for the dataset.
@@ -129,6 +130,8 @@ async def build(
     frame_times: str = Form("[]"),
     title: str = Form(""),
     hands: str = Form("[]"),
+    hardware: str = Form(""),
+    demonstrator: str = Form(""),
     audio: UploadFile | None = File(None),
 ):
     """Expert recorded in the browser: frames + audio + hand landmarks."""
@@ -136,13 +139,13 @@ async def build(
     times = json.loads(frame_times) or [i * 1.5 for i in range(len(fb))]
     ab = await audio.read() if audio else None
     try:
-        return await _finish_build(fb, times, ab, audio.filename if audio else "", title, json.loads(hands), "browser")
+        return await _finish_build(fb, times, ab, audio.filename if audio else "", title, json.loads(hands), "browser", hardware, demonstrator)
     except Exception as e:  # surface model errors to the UI
         raise HTTPException(502, f"Building the guide failed: {e}")
 
 
 @app.post("/api/procedures/build_from_video")
-async def build_from_video(video: UploadFile = File(...), title: str = Form("")):
+async def build_from_video(video: UploadFile = File(...), title: str = Form(""), hardware: str = Form(""), demonstrator: str = Form("")):
     """Expert recorded with the phone's normal camera app: extract frames and audio with ffmpeg."""
     tmp = Path(tempfile.mkdtemp())
     try:
@@ -160,7 +163,7 @@ async def build_from_video(video: UploadFile = File(...), title: str = Form(""))
         fb = [p.read_bytes() for p in fpaths]
         times = [i * every for i in range(len(fb))]
         ab = (tmp / "audio.mp3").read_bytes() if has_audio and (tmp / "audio.mp3").exists() else None
-        return await _finish_build(fb, times, ab, "audio.mp3", title, [], "video")
+        return await _finish_build(fb, times, ab, "audio.mp3", title, [], "video", hardware, demonstrator)
     except subprocess.CalledProcessError:
         raise HTTPException(400, "Couldn't read that video file.")
     except HTTPException:
@@ -173,10 +176,15 @@ async def build_from_video(video: UploadFile = File(...), title: str = Form(""))
 
 @app.get("/api/procedures")
 def list_procedures():
+    eps = {}
+    for sp in SESS.glob("*/session.json"):
+        pid = _read(sp).get("procedure_id")
+        eps[pid] = eps.get(pid, 0) + 1
     out = []
     for p in sorted(PROCS.glob("*/procedure.json"), reverse=True):
         j = _read(p)
-        out.append({"id": j["id"], "title": j.get("title"), "steps": len(j.get("steps", [])), "created": j.get("created"), "mock": j.get("mock")})
+        out.append({"id": j["id"], "title": j.get("title"), "hardware": j.get("hardware", ""), "steps": len(j.get("steps", [])),
+                    "episodes": eps.get(j["id"], 0), "created": j.get("created"), "mock": j.get("mock")})
     return out
 
 
@@ -302,6 +310,13 @@ async def save_session(sid: str, body: dict):
     return {"ok": True}
 
 
+def _mistakes(ev):
+    # New sessions log confirmed (spoken) mistakes; older ones only raw check results.
+    if any(e.get("type") == "mistake_spoken" or "outdated" in e for e in ev):
+        return sum(1 for e in ev if e.get("type") == "mistake_spoken")
+    return sum(1 for e in ev if e.get("type") == "check" and e.get("status") == "mistake")
+
+
 def _summary(s):
     ev = s.get("events", [])
     return {
@@ -313,7 +328,7 @@ def _summary(s):
         "duration": round((s.get("ended") or s.get("started") or 0) - (s.get("started") or 0), 1),
         "hand_samples": len(s.get("hands", [])),
         "frames": len(s.get("frames", [])),
-        "mistakes": sum(1 for e in ev if e.get("type") == "check" and e.get("status") == "mistake"),
+        "mistakes": _mistakes(ev),
         "questions": sum(1 for e in ev if e.get("type") == "ask"),
         "steps_done": sum(1 for e in ev if e.get("type") == "step_done"),
         "completed": bool(s.get("completed")),
@@ -346,16 +361,11 @@ def session_frame(sid: str, name: str):
     return FileResponse(p, media_type="image/jpeg")
 
 
-@app.get("/api/sessions/{sid}/export")
-def export_session(sid: str):
-    """Zip: episode.json (hands, events, labels, transcript) + labelled frames."""
-    s = _load_sess(sid)
-    if not s:
-        raise HTTPException(404)
+def _episode(s):
     proc = None
     if s.get("procedure_id") and _proc_path(s["procedure_id"]).exists():
         proc = _load_proc(s["procedure_id"])
-    episode = {
+    return {
         "format": "apprentice-episode-v1",
         "role": s.get("role"),
         "task": proc.get("title") if proc else s.get("procedure_title"),
@@ -366,16 +376,70 @@ def export_session(sid: str):
         "frames": s.get("frames", []),
         "hands": s.get("hands", []),
         "hand_landmark_format": "MediaPipe 21 keypoints, normalised image coords [x, y, z]",
+        "procedure_id": s.get("procedure_id"),
+        "id": s["id"],
     }
+
+
+def _zip_episode(z, s, prefix=""):
+    z.writestr(f"{prefix}episode.json", json.dumps(_episode(s), indent=2))
+    fdir = DATA / s["frames_dir"]
+    if fdir.exists():
+        for f in sorted(fdir.glob("*.jpg")):
+            z.write(f, f"{prefix}frames/{f.name}")
+
+
+@app.get("/api/sessions/{sid}/export")
+def export_session(sid: str):
+    """Zip: episode.json (hands, events, labels, transcript) + labelled frames."""
+    s = _load_sess(sid)
+    if not s:
+        raise HTTPException(404)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("episode.json", json.dumps(episode, indent=2))
-        fdir = DATA / s["frames_dir"]
-        if fdir.exists():
-            for f in sorted(fdir.glob("*.jpg")):
-                z.write(f, f"frames/{f.name}")
+        _zip_episode(z, s)
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{sid}.zip"'})
+
+
+def build_dataset_zip(target):
+    """Everything recorded, in one place: every guide and every episode."""
+    sessions = [_read(p) for p in SESS.glob("*/session.json")]
+    sessions.sort(key=lambda s: s.get("started") or 0)
+    procs = [_read(p) for p in PROCS.glob("*/procedure.json")]
+    manifest = {
+        "format": "apprenta-dataset-v1",
+        "created": time.time(),
+        "tasks": [{"id": p["id"], "title": p.get("title"), "hardware": p.get("hardware", ""), "steps": len(p.get("steps", []))} for p in procs],
+        "episodes": [{**_summary(s), "path": f"episodes/{s['id']}/"} for s in sessions],
+        "totals": {
+            "episodes": len(sessions),
+            "expert_demos": sum(1 for s in sessions if s.get("role") == "expert"),
+            "guided_attempts": sum(1 for s in sessions if s.get("role") != "expert"),
+            "hand_samples": sum(len(s.get("hands", [])) for s in sessions),
+            "labelled_frames": sum(len(s.get("frames", [])) for s in sessions),
+            "mistakes_caught": sum(_mistakes(s.get("events", [])) for s in sessions),
+        },
+    }
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+        for p in procs:
+            d = PROCS / p["id"]
+            z.writestr(f"tasks/{p['id']}/procedure.json", json.dumps(p, indent=2))
+            for a in d.glob("audio.*"):
+                z.write(a, f"tasks/{p['id']}/{a.name}")
+        for s in sessions:
+            _zip_episode(z, s, f"episodes/{s['id']}/")
+    return manifest
+
+
+@app.get("/api/export_all")
+def export_all():
+    buf = io.BytesIO()
+    build_dataset_zip(buf)
+    buf.seek(0)
+    name = f"apprenta-dataset-{time.strftime('%Y%m%d-%H%M')}.zip"
+    return StreamingResponse(buf, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 app.mount("/", StaticFiles(directory=ROOT / "static", html=True), name="static")

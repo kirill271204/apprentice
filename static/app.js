@@ -1,4 +1,4 @@
-// Apprentice frontend. Three views: Record (expert), Guide (novice), Data (robot dataset).
+// Apprenta frontend. One hub (Start) and three modes: Record, Guide, Data.
 
 const $ = (id) => document.getElementById(id);
 const CHECK_EVERY_MS = 1200; // pause between checks; each check itself takes about 3 s
@@ -233,58 +233,187 @@ function drawHands(ctx, canvas, video, hands) {
   const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
   const P = (p) => [ox + p[0] * vw * s, oy + p[1] * vh * s];
   for (const h of hands) {
-    ctx.strokeStyle = "rgba(91,143,240,0.9)";
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    ctx.lineWidth = 1.5;
     for (const [a, b] of HAND_LINKS) {
       const [x1, y1] = P(h.lm[a]), [x2, y2] = P(h.lm[b]);
       ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     }
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
     for (const p of h.lm) {
       const [x, y] = P(p);
-      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill();
     }
   }
 }
 
-// ---------- navigation ----------
+// ---------- navigation: one hub, every mode closes back to Start ----------
 
-function show(view) {
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
-  for (const v of ["record", "guide", "data"]) $(`view-${v}`).hidden = v !== view;
-  if (view === "guide" && !guide.running) renderGuideList();
-  if (view === "data") renderData();
+const SCREENS = ["start", "r-details", "r-capture", "r-processing", "r-review", "r-saved", "g-choose", "g-live", "g-done", "data"];
+let current = "start";
+
+function go(name) {
+  for (const s of SCREENS) $(`scr-${s}`).hidden = s !== name;
+  current = name;
+  contours.active = name === "start";
+  if (name === "start") { contours.start(); refreshTotals(); }
 }
-document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
+
+function closeToStart() {
+  if (guide.running) endGuide(false, true);
+  stopRecCamera();
+  go("start");
+}
+document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeToStart));
+
+// ---------- start screen ----------
+
+let PROCS = [], SESSIONS = [];
+
+async function refreshTotals() {
+  try {
+    [PROCS, SESSIONS] = await Promise.all([api("/api/procedures"), api("/api/sessions")]);
+    const demos = SESSIONS.filter((s) => s.role === "expert").length;
+    $("totals").textContent = `${demos} demo${demos === 1 ? "" : "s"} · ${PROCS.length} task${PROCS.length === 1 ? "" : "s"} · ${SESSIONS.length} episode${SESSIONS.length === 1 ? "" : "s"}`;
+    $("go-guide").disabled = PROCS.length === 0;
+    $("guide-hint").hidden = PROCS.length > 0;
+    for (const id of ["go-record", "go-data"]) $(id).disabled = false;
+  } catch {
+    $("totals").textContent = "Offline";
+    for (const id of ["go-record", "go-guide", "go-data"]) $(id).disabled = true;
+    $("guide-hint").hidden = false;
+    $("guide-hint").textContent = "Can't reach Apprenta";
+  }
+}
+
+$("go-record").onclick = () => openDetails();
+$("go-guide").onclick = () => openChoose();
+$("go-data").onclick = () => openData();
+$("logo").onclick = (e) => contours.ripple(e.clientX, e.clientY);
+
+// Dynamic background: slow contour lines that bend towards your touch.
+const contours = (() => {
+  const cv = $("contours"), ctx = cv.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const pointer = { x: -1e4, y: -1e4, tx: -1e4, ty: -1e4 };
+  const ripples = [];
+  let raf = 0, t0 = performance.now();
+  const api = { active: true };
+  function size() {
+    cv.width = innerWidth * devicePixelRatio;
+    cv.height = innerHeight * devicePixelRatio;
+  }
+  function frame() {
+    raf = 0;
+    if (!api.active) return;
+    const W = innerWidth, H = innerHeight, t = (performance.now() - t0) / 1000;
+    const w = (Math.PI * 2) / 25; // one cycle every ~25 s
+    pointer.x += (pointer.tx - pointer.x) * 0.06;
+    pointer.y += (pointer.ty - pointer.y) * 0.06;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
+    ctx.lineWidth = 1;
+    const N = 16;
+    for (let i = 0; i < N; i++) {
+      const y0 = (H * (i + 0.5)) / N;
+      ctx.beginPath();
+      for (let x = -10; x <= W + 10; x += 10) {
+        let y = y0 + 18 * Math.sin(x * 0.006 + t * w + i * 0.7) + 9 * Math.sin(x * 0.013 - t * w * 1.3 + i * 1.9);
+        const dx = x - pointer.x, dy = y - pointer.y, d2 = dx * dx + dy * dy;
+        y -= dy * 0.35 * Math.exp(-d2 / 14000); // bend towards the touch
+        for (const r of ripples) {
+          const d = Math.hypot(x - r.x, y - r.y), age = t - r.t, front = age * 220;
+          y += 10 * Math.exp(-((d - front) ** 2) / 900) * Math.max(0, 1 - age / 2.5) * Math.sin(d * 0.05);
+        }
+        x === -10 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    for (let k = ripples.length - 1; k >= 0; k--) if (t - ripples[k].t > 2.5) ripples.splice(k, 1);
+    if (!reduce) raf = requestAnimationFrame(frame);
+  }
+  api.start = () => { size(); if (!raf) raf = requestAnimationFrame(frame); };
+  api.ripple = (x, y) => { ripples.push({ x, y, t: (performance.now() - t0) / 1000 }); api.start(); };
+  addEventListener("resize", () => api.active && api.start());
+  addEventListener("pointermove", (e) => { pointer.tx = e.clientX; pointer.ty = e.clientY; });
+  addEventListener("pointerdown", (e) => { pointer.tx = e.clientX; pointer.ty = e.clientY; });
+  return api;
+})();
 
 // ======================================================================
-// RECORD (expert)
+// RECORD (expert demo): details, capture, processing, review
 // ======================================================================
 
-const rec = { stream: null, recording: false, frames: [], times: [], hands: [], audioChunks: [], mr: null, t0: 0, timer: null, stopHands: null, proc: null };
+const rec = { stream: null, recording: false, frames: [], times: [], hands: [], audioChunks: [], mr: null, t0: 0, timer: null, stopHands: null, proc: null, q: 0 };
 
-$("rec-cam").onclick = async () => {
+function openDetails() {
+  rec.q = 0;
+  showQuestion();
+  $("r-chips").innerHTML = [...new Map(PROCS.map((p) => [p.title, p])).values()].slice(0, 6)
+    .map((p) => `<button class="chip" data-t="${esc(p.title)}" data-h="${esc(p.hardware || "")}">${esc(p.title)}</button>`).join("");
+  $("r-chips").querySelectorAll(".chip").forEach((c) => (c.onclick = () => {
+    $("r-title").value = c.dataset.t;
+    if (c.dataset.h) $("r-hw").value = c.dataset.h;
+    $("r-chips").querySelectorAll(".chip").forEach((x) => x.classList.toggle("sel", x === c));
+  }));
+  go("r-details");
+  setTimeout(() => $("r-title").focus(), 250);
+}
+
+function showQuestion() {
+  document.querySelectorAll("#scr-r-details .q").forEach((el) => (el.hidden = +el.dataset.q !== rec.q));
+  document.querySelectorAll("#r-dots i").forEach((d, i) => d.classList.toggle("on", i <= Math.min(rec.q, 2)));
+  $("r-next").textContent = rec.q === 3 ? "Start recording" : "Next";
+  $("r-upload-btn").hidden = rec.q !== 3;
+  if (rec.q === 3) {
+    const rows = [["Task", $("r-title").value.trim() || "Untitled task"], ["Hardware", $("r-hw").value.trim() || "Not given"],
+      ["Demonstrator", $("r-who").value.trim() || "Not given"], ["Narration", $("r-audio").checked ? "On" : "Off"]];
+    $("r-summary").innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><span>${esc(v)}</span></div>`).join("");
+  }
+}
+
+$("r-next").onclick = () => {
+  if (rec.q === 0 && !$("r-title").value.trim()) { $("r-title").focus(); toast("Name the task first"); return; }
+  if (rec.q < 3) { rec.q++; showQuestion(); return; }
+  openCapture();
+};
+for (const id of ["r-title", "r-hw", "r-who"]) $(id).addEventListener("keydown", (e) => e.key === "Enter" && $("r-next").onclick());
+$("r-upload-btn").onclick = () => $("r-file").click();
+
+async function openCapture() {
+  go("r-capture");
+  $("rec-timer").textContent = "00:00";
+  $("rec-go").classList.remove("on");
+  const p = $("rec-prompt"); p.style.animation = "none"; p.offsetHeight; p.style.animation = "";
   if (rec.stream) return;
   try {
-    rec.stream = await openCamera($("rec-video"), true);
-    $("rec-empty").hidden = true;
-    $("rec-go").disabled = false;
-    $("rec-cam").textContent = "Camera on";
-    $("rec-cam").disabled = true;
+    rec.stream = await openCamera($("rec-video"), $("r-audio").checked);
     loadHands().then(() => {
+      if (!rec.stream) return;
       rec.stopHands = startHandLoop($("rec-video"), $("rec-overlay"), (hands) => {
         if (rec.recording) rec.hands.push({ t: +((performance.now() - rec.t0) / 1000).toFixed(2), hands });
       });
     });
   } catch (e) {
-    toast(e.message || "Couldn't open the camera");
+    toast(e.message || "Couldn't open the camera", 5000);
   }
-};
+}
+
+function stopRecCamera() {
+  clearInterval(rec.timer);
+  rec.recording = false;
+  rec.stopHands?.();
+  rec.stopHands = null;
+  stopStream(rec.stream);
+  rec.stream = null;
+}
 
 $("rec-go").onclick = () => (rec.recording ? stopRecording() : startRecording());
 
 function startRecording() {
-  Object.assign(rec, { frames: [], times: [], hands: [], audioChunks: [], recording: true, t0: performance.now() });
+  if (!rec.stream) return;
+  Object.assign(rec, { frames: [], times: [], hands: [], audioChunks: [], recording: true, t0: performance.now(), mr: null });
   const mime = audioMime();
   const audioTracks = rec.stream.getAudioTracks();
   if (audioTracks.length && window.MediaRecorder) {
@@ -292,120 +421,111 @@ function startRecording() {
     rec.mr.ondataavailable = (e) => e.data.size && rec.audioChunks.push(e.data);
     rec.mr.start(1000);
   }
-  $("rec-go").textContent = "Stop and build guide";
-  $("rec-go").classList.add("rec");
-  $("rec-badge").hidden = false;
+  $("rec-go").classList.add("on");
   rec.timer = setInterval(async () => {
     const t = (performance.now() - rec.t0) / 1000;
-    $("rec-timer").textContent = fmtTime(t);
+    $("rec-timer").textContent = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
     const blob = await captureJpeg($("rec-video"));
-    if (blob && rec.recording) {
-      rec.frames.push(blob);
-      rec.times.push(+t.toFixed(2));
-    }
-    $("rec-info").textContent = `${rec.frames.length} frames, ${rec.hands.length} hand samples. Keep talking through each step.`;
+    if (blob && rec.recording) { rec.frames.push(blob); rec.times.push(+t.toFixed(2)); }
   }, FRAME_EVERY_MS);
 }
 
 async function stopRecording() {
   rec.recording = false;
   clearInterval(rec.timer);
-  $("rec-badge").hidden = true;
-  $("rec-go").classList.remove("rec");
-  $("rec-go").disabled = true;
-  $("rec-go").textContent = "Building guide…";
+  $("rec-go").classList.remove("on");
   let audioBlob = null;
   if (rec.mr && rec.mr.state !== "inactive") {
     await new Promise((res) => { rec.mr.onstop = res; rec.mr.stop(); });
     audioBlob = new Blob(rec.audioChunks, { type: rec.mr.mimeType || "audio/webm" });
   }
-  if (rec.frames.length < 2) {
-    toast("Record for a few more seconds");
-    resetRecButton();
-    return;
-  }
+  if (rec.frames.length < 2) { toast("Record for a few more seconds"); return; }
   const fd = new FormData();
   rec.frames.forEach((b, i) => fd.append("frames", b, `${i}.jpg`));
   fd.append("frame_times", JSON.stringify(rec.times));
-  fd.append("title", $("rec-title").value.trim());
   fd.append("hands", JSON.stringify(rec.hands));
   if (audioBlob) fd.append("audio", audioBlob, `audio.${extFor(audioBlob.type)}`);
-  $("rec-info").textContent = "Turning the demo into steps. This takes up to a minute.";
-  try {
-    const proc = await api("/api/procedures/build", { method: "POST", body: fd });
-    showResult(proc);
-  } catch (e) {
-    toast(e.message, 6000);
-    $("rec-info").textContent = "";
-  }
-  resetRecButton();
+  const thumb = URL.createObjectURL(rec.frames[Math.floor(rec.frames.length / 2)]);
+  stopRecCamera();
+  runBuild("/api/procedures/build", fd, thumb);
 }
 
-function resetRecButton() {
-  $("rec-go").disabled = false;
-  $("rec-go").textContent = "Start recording";
-}
-
-$("rec-file").onchange = async (e) => {
+$("r-file").onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const fd = new FormData();
   fd.append("video", file);
-  fd.append("title", $("rec-title").value.trim());
-  $("rec-info").textContent = `Uploading ${file.name} and turning it into steps. This takes up to a minute.`;
-  try {
-    showResult(await api("/api/procedures/build_from_video", { method: "POST", body: fd }));
-  } catch (err) {
-    toast(err.message, 6000);
-    $("rec-info").textContent = "";
-  }
   e.target.value = "";
+  runBuild("/api/procedures/build_from_video", fd, "");
 };
 
-function showResult(proc) {
-  rec.proc = proc;
-  $("rec-info").textContent = "";
-  $("rec-result").hidden = false;
-  $("res-title").textContent = proc.title || "Untitled";
-  $("res-summary").textContent = proc.summary || "";
-  $("res-steps").className = "steps-edit";
-  $("res-steps").innerHTML = proc.steps.map((s, i) => `
-    <div class="se" data-i="${i}">
-      <img src="/api/procedures/${proc.id}/frame/${s.ref_frame}" alt="">
-      <div>
-        <div class="n">Step ${i + 1}</div>
-        <input data-k="title" value="${esc(s.title)}">
-        <textarea data-k="instruction">${esc(s.instruction)}</textarea>
-        <input data-k="done_when" value="${esc(s.done_when)}" title="Done when">
-      </div>
-    </div>`).join("");
-  $("rec-result").scrollIntoView({ behavior: "smooth" });
+// Processing: the backend working, shown as calm stages.
+async function runBuild(url, fd, thumb) {
+  fd.append("title", $("r-title").value.trim());
+  fd.append("hardware", $("r-hw").value.trim());
+  fd.append("demonstrator", $("r-who").value.trim());
+  go("r-processing");
+  $("p-thumb").src = thumb || "";
+  $("p-thumb").hidden = !thumb;
+  $("p-error").hidden = true;
+  const items = [...document.querySelectorAll("#p-stages li")];
+  items.forEach((li) => (li.className = ""));
+  const at = [0, 2500, 6000, 11000, 16000];
+  let k = -1;
+  const advance = (i) => {
+    items.forEach((li, j) => { li.classList.toggle("shown", j <= i); li.classList.toggle("active", j === i); li.classList.toggle("done", j < i); });
+    k = i;
+  };
+  const timers = at.map((ms, i) => setTimeout(() => advance(i), ms));
+  try {
+    const proc = await api(url, { method: "POST", body: fd });
+    timers.forEach(clearTimeout);
+    for (let i = Math.max(k, 0); i <= items.length; i++) { advance(i); await new Promise((r) => setTimeout(r, 180)); }
+    await new Promise((r) => setTimeout(r, 300));
+    showReview(proc);
+  } catch (e) {
+    timers.forEach(clearTimeout);
+    if (k < 0) advance(0);
+    items[k].className = "shown failed";
+    $("p-error").hidden = false;
+    $("p-error").innerHTML = `${esc(e.message)} <button class="btn text" id="p-retry">Try again</button>`;
+    $("p-retry").onclick = () => openCapture();
+  }
 }
 
-$("res-save").onclick = async () => {
-  const p = rec.proc;
-  document.querySelectorAll("#res-steps .se").forEach((el) => {
-    const s = p.steps[+el.dataset.i];
-    el.querySelectorAll("[data-k]").forEach((f) => (s[f.dataset.k] = f.value.trim()));
-  });
-  rec.proc = await api(`/api/procedures/${p.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ steps: p.steps }) });
-  toast("Guide saved");
-};
+function showReview(proc) {
+  rec.proc = proc;
+  $("rv-title").textContent = proc.title || "Untitled";
+  $("rv-hw").textContent = proc.hardware || proc.summary || "";
+  $("rv-steps").innerHTML = proc.steps.map((s, i) => `
+    <div class="row" data-i="${i}">
+      <img class="thumb64" src="/api/procedures/${proc.id}/frame/${s.ref_frame}" alt="">
+      <div class="step-edit">
+        <div class="n">Step ${i + 1}${s.t_end > s.t_start ? ` · ${Math.round(s.t_end - s.t_start)} s` : ""}</div>
+        <div class="t" contenteditable="true" spellcheck="false">${esc(s.instruction)}</div>
+      </div>
+    </div>`).join("");
+  go("r-review");
+}
 
-$("res-use").onclick = async () => {
-  await $("res-save").onclick();
-  stopStream(rec.stream);
-  rec.stopHands?.();
-  rec.stream = null;
-  $("rec-cam").disabled = false;
-  $("rec-cam").textContent = "Start camera";
-  $("rec-empty").hidden = false;
-  show("guide");
-  startGuide(rec.proc.id);
+$("rv-save").onclick = async () => {
+  const p = rec.proc;
+  document.querySelectorAll("#rv-steps .row").forEach((el) => {
+    p.steps[+el.dataset.i].instruction = el.querySelector("[contenteditable]").textContent.trim();
+  });
+  $("rv-save").classList.add("loading");
+  try {
+    rec.proc = await api(`/api/procedures/${p.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ steps: p.steps }) });
+    $("sv-sub").textContent = `${rec.proc.steps.length} steps · ${rec.proc.title}`;
+    go("r-saved");
+  } catch (e) { toast(e.message); }
+  $("rv-save").classList.remove("loading");
 };
+$("rv-redo").onclick = () => openCapture();
+$("sv-try").onclick = () => startGuide(rec.proc.id);
 
 // ======================================================================
-// GUIDE (novice gets live help)
+// GUIDE (live coaching)
 // ======================================================================
 
 const guide = {
@@ -414,17 +534,18 @@ const guide = {
   stepStartedAt: 0, lastCaptureAt: 0, latestApplied: 0, inflightN: 0, prevBlob: null,
   history: [], votes: [], verifying: false, verifiedAt: 0,
   mistakeOnStep: false, mistakeActive: false, mistakeSpokenAt: 0, nudgeAt: 0, paused: false,
+  boxState: "searching", boxHold: 0,
 };
 
-async function renderGuideList() {
+async function openChoose() {
+  go("g-choose");
   const list = await api("/api/procedures");
-  $("g-empty").hidden = list.length > 0;
   $("g-list").innerHTML = list.map((p) => `
-    <button class="item" data-id="${p.id}">
-      <span><strong>${esc(p.title)}</strong><br><span class="muted small">${p.steps} steps</span></span>
-      <span class="btn primary">Start</span>
-    </button>`).join("");
-  $("g-list").querySelectorAll(".item").forEach((b) => (b.onclick = () => startGuide(b.dataset.id)));
+    <button class="row" data-id="${p.id}">
+      <div class="grow"><div class="t">${esc(p.title)}</div><div class="s">${esc(p.hardware || "")}</div></div>
+      <div class="meta">${p.steps} steps<br>${p.episodes} episodes</div>
+    </button>`).join("") || `<p class="body">No guides yet. Record a demo first.</p>`;
+  $("g-list").querySelectorAll(".row").forEach((b) => (b.onclick = () => startGuide(b.dataset.id)));
 }
 
 const now = () => +((performance.now() - guide.t0) / 1000).toFixed(2);
@@ -437,30 +558,24 @@ async function startGuide(pid) {
   resetMotion();
   keepAwake();
   guide.session = {
-    id: "s" + Date.now().toString(36),
-    role: "novice",
-    procedure_id: proc.id,
-    procedure_title: proc.title,
-    started: Date.now() / 1000,
-    events: [],
-    hands: [],
-    frames: [],
-    completed: false,
+    id: "s" + Date.now().toString(36), role: "novice", procedure_id: proc.id, procedure_title: proc.title,
+    started: Date.now() / 1000, events: [], hands: [], frames: [], completed: false,
   };
-  $("g-pick").hidden = true;
-  $("g-finish").hidden = true;
-  $("g-live").hidden = false;
+  $("g-segs").innerHTML = proc.steps.map(() => "<i></i>").join("");
+  go("g-live");
   try {
     guide.stream = await openCamera($("g-video"), false);
   } catch (e) {
     toast(e.message || "Couldn't open the camera", 6000);
-    endGuide(false);
+    endGuide(false, true);
+    go("start");
     return;
   }
   loadHands().then(() => {
     if (!guide.running) return;
     guide.stopHands = startHandLoop($("g-video"), $("g-overlay"), (hands) => {
       updateMotion(hands);
+      placeBox();
       if (hands.length) guide.session.hands.push({ t: now(), step: guide.step, hands });
     });
   });
@@ -469,6 +584,7 @@ async function startGuide(pid) {
   ttsUrl(introLine()); ttsUrl(stepLine(0)); // first lines go out first
   prefetchSpeech([...proc.steps.map((_, i) => stepLine(i)), ...PRAISE, "That was the last step. You're all done."]);
   enterStep(0, true);
+  placeBox();
   runCheckLoop();
 }
 
@@ -481,14 +597,20 @@ function enterStep(i, intro = false, praise = "") {
   guide.stepStartedAt = guide.latestApplied = performance.now();
   Object.assign(guide, { mistakeOnStep: false, mistakeActive: false, history: [], votes: [], prevBlob: null, mistakeSpokenAt: 0, nudgeAt: 0, verifying: false, verifiedAt: 0 });
   const s = steps[guide.step];
-  $("g-stepno").textContent = `Step ${guide.step + 1} of ${steps.length}`;
-  $("g-bar").style.width = `${(guide.step / steps.length) * 100}%`;
-  $("g-title").textContent = s.title;
-  $("g-instr").textContent = s.instruction;
-  $("g-done").textContent = s.done_when ? `Done when: ${s.done_when}` : "";
-  $("g-ref-wrap").hidden = !Number.isInteger(s.ref_frame);
+  $("g-stepno").textContent = `STEP ${guide.step + 1} / ${steps.length}`;
+  $("g-segs").querySelectorAll("i").forEach((el, k) => el.classList.toggle("on", k <= guide.step));
+  $("g-ref").hidden = !Number.isInteger(s.ref_frame);
   $("g-ref").src = `/api/procedures/${guide.proc.id}/frame/${s.ref_frame}`;
-  setFeedback("", "");
+  // After a completed step the box shows its tick briefly, then the next box draws in.
+  const redraw = () => {
+    $("g-box-label").textContent = s.title;
+    const box = $("g-box");
+    box.style.animation = "none"; box.offsetHeight; box.style.animation = "";
+    setBoxState("searching");
+  };
+  if (praise) setTimeout(redraw, 500); else redraw();
+  setInstruction(s.instruction, false);
+  $("g-hint").textContent = `Say "Coach, …" to ask · swipe to skip`;
   logEvent("step_start", { title: s.title });
   clearSpeech(); // anything still queued is about the previous step
   if (intro) speak(introLine());
@@ -496,12 +618,123 @@ function enterStep(i, intro = false, praise = "") {
   speak(stepLine(guide.step));
 }
 
-function setFeedback(text, status) {
-  const f = $("g-feedback");
-  f.hidden = !text;
-  f.textContent = text;
-  f.className = `feedback ${status || ""}`;
+function setInstruction(text, correction) {
+  $("g-instr").textContent = text;
+  $("g-ibar").classList.toggle("correction", !!correction);
 }
+
+function setBoxState(state) {
+  guide.boxState = state;
+  $("g-box").className = `obox ${state}`;
+  $("g-box").hidden = false;
+}
+
+// Called by the check pipeline: captions always mirror what the coach says.
+function setFeedback(text, status) {
+  const instr = guide.proc?.steps[guide.step]?.instruction || "";
+  if (status === "done") { setBoxState("complete"); setInstruction(text || instr, false); return; }
+  if (status === "mistake") {
+    if (guide.boxState !== "mistake") { setBoxState("mistake"); navigator.vibrate?.([60, 60, 60]); }
+    setInstruction(text, true);
+    return;
+  }
+  if (status === "unclear") { setBoxState("searching"); $("g-hint").textContent = text || "Hold steady"; return; }
+  if (status === "unsure") { $("g-hint").textContent = "Not sure yet · swipe left when it's done"; return; }
+  if (status === "error") { $("g-hint").textContent = "Can't reach Apprenta · still watching"; return; }
+  // working
+  setInstruction(instr, false);
+  setBoxState(motionState().present ? "active" : "searching");
+  $("g-hint").textContent = `Say "Coach, …" to ask · swipe to skip`;
+}
+
+// The box follows the work area (where the hands have been), mapped onto the cover-fit video.
+function placeBox() {
+  const v = $("g-video"), box = $("g-box");
+  const W = innerWidth, H = innerHeight, vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw) return;
+  const s = Math.max(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  let b = workBox();
+  let x0, y0, x1, y1;
+  if (b) {
+    const pad = 0.06;
+    [x0, y0, x1, y1] = [ox + (b[0] - pad) * vw * s, oy + (b[1] - pad * 2) * vh * s, ox + (b[2] + pad) * vw * s, oy + (b[3] + pad) * vh * s];
+  } else {
+    [x0, y0, x1, y1] = [W * 0.18, H * 0.3, W * 0.82, H * 0.62];
+  }
+  x0 = Math.max(16, x0); y0 = Math.max(110, y0); x1 = Math.min(W - 16, x1); y1 = Math.min(H - 190, y1);
+  if (x1 - x0 < 80 || y1 - y0 < 80) return;
+  Object.assign(box.style, { left: `${x0}px`, top: `${y0}px`, width: `${x1 - x0}px`, height: `${y1 - y0}px` });
+  if (guide.boxState === "searching" && motionState().present && !guide.mistakeActive) setBoxState("active");
+  if (guide.boxState === "active" && !motionState().present) setBoxState("searching");
+}
+
+function goNext() {
+  if (!guide.running) return;
+  logEvent("skip");
+  if (guide.step >= guide.proc.steps.length - 1) finishGuide();
+  else enterStep(guide.step + 1);
+}
+function goBack() { if (guide.running) { logEvent("back"); enterStep(guide.step - 1); } }
+function repeatStep() {
+  if (!guide.running) return;
+  const s = guide.proc.steps[guide.step];
+  speak(`${s.instruction} ${s.tip || ""}`);
+}
+$("g-stop").onclick = () => closeToStart();
+
+// Swipe left to advance, right to go back: for when automatic checks lag.
+(() => {
+  let sx = 0, sy = 0, st = 0;
+  const el = $("scr-g-live");
+  el.addEventListener("pointerdown", (e) => { sx = e.clientX; sy = e.clientY; st = performance.now(); });
+  el.addEventListener("pointerup", (e) => {
+    if (e.target.closest("button, .kthumb")) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && performance.now() - st < 800) dx < 0 ? goNext() : goBack();
+  });
+})();
+
+// Tap the keyframe to see the expert frame full screen for 3 s.
+$("g-ref").onclick = () => {
+  $("g-expert-img").src = $("g-ref").src;
+  $("g-expert").hidden = false;
+  clearTimeout(guide.expertT);
+  guide.expertT = setTimeout(() => ($("g-expert").hidden = true), 3000);
+};
+$("g-expert").onclick = () => ($("g-expert").hidden = true);
+
+function finishGuide() {
+  guide.session.completed = true;
+  logEvent("complete");
+  setBoxState("complete");
+  const s = guide.session;
+  const mistakes = s.events.filter((e) => e.type === "mistake_spoken").length;
+  $("gd-time").textContent = `${guide.proc.title} · ${fmtTime(now())}`;
+  $("gd-text").textContent = `${guide.proc.steps.length} steps · ${mistakes} mistake${mistakes === 1 ? "" : "s"} caught · ${s.hands.length} hand samples · ${s.frames.length} labelled frames`;
+  guide.lastSessionId = s.id;
+  setTimeout(() => endGuide(true), 1200);
+}
+
+async function endGuide(completed, silent = false) {
+  if (!guide.running) return;
+  guide.running = false;
+  clearTimeout(guide.loop);
+  clearInterval(guide.saveTimer);
+  guide.stopHands?.();
+  guide.stopHands = null;
+  stopListening();
+  if (!completed) clearSpeech(true);
+  guide.wakeLock?.release?.().catch(() => {});
+  guide.wakeLock = null;
+  stopStream(guide.stream);
+  guide.stream = null;
+  $("g-box").hidden = true;
+  await saveSession();
+  if (completed) go("g-done");
+  else if (!silent) go("start");
+}
+
+$("gd-view").onclick = () => openData(guide.lastSessionId);
 
 // ---------- fast local layer: hand motion decides WHEN to ask the AI ----------
 // Like a robot's "System 1": MediaPipe runs on the phone at ~10 Hz and triggers
@@ -564,7 +797,7 @@ function captureWork(video, maxOut = 640, quality = 0.75) {
   const W = video.videoWidth, H = video.videoHeight;
   if (!W) return Promise.resolve(null);
   let sx = 0, sy = 0, sw = W, sh = H;
-  const b = workBox();
+  const b = null; // full frame: cropping to the hands could cut the object out of view
   if (b) {
     const bw = (b[2] - b[0]) * W, bh = (b[3] - b[1]) * H;
     const cx = ((b[0] + b[2]) / 2) * W, cy = ((b[1] + b[3]) / 2) * H;
@@ -747,22 +980,6 @@ function chime(kind) {
   } catch {}
 }
 
-$("g-next").onclick = () => {
-  if (!guide.running) return;
-  logEvent("skip");
-  if (guide.step >= guide.proc.steps.length - 1) finishGuide();
-  else enterStep(guide.step + 1);
-};
-$("g-prev").onclick = () => guide.running && (logEvent("back"), enterStep(guide.step - 1));
-$("g-repeat").onclick = () => {
-  if (!guide.running) return;
-  const s = guide.proc.steps[guide.step];
-  speak(`${s.instruction} ${s.tip || ""}`);
-};
-$("g-stop").onclick = () => endGuide(false);
-$("g-again").onclick = () => { $("g-finish").hidden = true; $("g-pick").hidden = false; renderGuideList(); };
-$("g-see-data").onclick = () => show("data");
-
 // ---------- voice in ----------
 // The phone sits on your chest, so you talk to it: "Coach, which way does this go?",
 // "Coach, next", "Coach, repeat", "Coach, go back". The wake word keeps room chatter out.
@@ -781,9 +998,9 @@ async function sendUtterance(blob, handsFree) {
   $("g-heard").textContent = r.question ? `You said: "${r.question}"` : "";
   if (r.command) {
     logEvent("voice_command", { question: r.question, command: r.command });
-    if (r.command === "next") $("g-next").onclick();
-    else if (r.command === "back") $("g-prev").onclick();
-    else if (r.command === "repeat") $("g-repeat").onclick();
+    if (r.command === "next") goNext();
+    else if (r.command === "back") goBack();
+    else if (r.command === "repeat") repeatStep();
     else if (r.command === "check") guide.lastCaptureAt = 0;
     return;
   }
@@ -925,160 +1142,223 @@ async function saveSession() {
   }
 }
 
-function finishGuide() {
-  guide.session.completed = true;
-  logEvent("complete");
-  $("g-bar").style.width = "100%";
-  const s = guide.session;
-  const mistakes = s.events.filter((e) => e.type === "check" && e.status === "mistake").length;
-  $("g-finish-text").textContent = `${guide.proc.steps.length} steps in ${fmtTime(now())}. ${mistakes} mistake${mistakes === 1 ? "" : "s"} caught. ${s.hands.length} hand samples and ${s.frames.length} labelled frames saved for robot training.`;
-  setTimeout(() => endGuide(true), 1500);
-}
-
-async function endGuide(completed) {
-  guide.running = false;
-  clearTimeout(guide.loop);
-  clearInterval(guide.saveTimer);
-  guide.stopHands?.();
-  guide.stopHands = null;
-  stopListening();
-  clearSpeech();
-  guide.wakeLock?.release?.().catch(() => {});
-  guide.wakeLock = null;
-  stopStream(guide.stream);
-  guide.stream = null;
-  await saveSession();
-  $("g-live").hidden = true;
-  if (completed) $("g-finish").hidden = false;
-  else { $("g-pick").hidden = false; renderGuideList(); }
-}
-
 // ======================================================================
-// DATA (robot learning dataset)
+// DATA dashboard: every figure traces back to the episodes behind it
 // ======================================================================
 
-async function renderData() {
-  const list = await api("/api/sessions");
-  const tot = list.reduce((a, s) => ({
-    eps: a.eps + 1,
-    secs: a.secs + (s.duration || 0),
-    hands: a.hands + s.hand_samples,
-    frames: a.frames + s.frames,
-    fixes: a.fixes + s.mistakes,
-  }), { eps: 0, secs: 0, hands: 0, frames: 0, fixes: 0 });
-  $("d-totals").innerHTML = [
-    ["Episodes", tot.eps], ["Recorded time", fmtTime(tot.secs)], ["Hand samples", tot.hands.toLocaleString()],
-    ["Labelled frames", tot.frames.toLocaleString()], ["Mistakes caught", tot.fixes],
-  ].map(([l, v]) => `<div class="metric"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("");
-  $("d-list").innerHTML = list.length ? list.map((s) => `
-    <button class="item" data-id="${s.id}">
-      <span><strong>${esc(s.procedure_title || "Untitled")}</strong>
-      <span class="tag ${s.role === "expert" ? "ok" : "warn"}">${s.role === "expert" ? "expert demo" : "guided attempt"}</span><br>
-      <span class="muted small">${new Date((s.started || 0) * 1000).toLocaleTimeString()} · ${fmtTime(s.duration || 0)} · ${s.mistakes} mistakes · ${s.hand_samples} hand samples</span></span>
-      <span class="muted">›</span>
-    </button>`).join("") : `<p class="muted small">No episodes yet.</p>`;
-  $("d-list").querySelectorAll(".item").forEach((b) => (b.onclick = () => {
-    $("d-list").querySelectorAll(".item").forEach((x) => x.classList.toggle("sel", x === b));
-    renderEpisode(b.dataset.id);
+const dash = { filter: "all", sessions: [], procs: [], seenFigs: false };
+
+async function openData(highlightSid) {
+  go("data");
+  $("d-overview").hidden = false; $("d-task").hidden = true; $("d-ep").hidden = true;
+  [dash.sessions, dash.procs] = await Promise.all([api("/api/sessions"), api("/api/procedures")]);
+  renderOverview();
+  if (highlightSid) openEpisode(highlightSid, true);
+}
+
+document.querySelectorAll("#d-filter .chip").forEach((c) => (c.onclick = () => {
+  dash.filter = c.dataset.f;
+  document.querySelectorAll("#d-filter .chip").forEach((x) => x.classList.toggle("sel", x === c));
+  renderOverview();
+}));
+
+function countUp(el, to) {
+  const t0 = performance.now();
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / 600);
+    el.textContent = Math.round(to * (1 - (1 - k) ** 3)).toLocaleString();
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  // Animation frames pause in background tabs: always land on the real number.
+  setTimeout(() => (el.textContent = to.toLocaleString()), 700);
+}
+
+function renderOverview() {
+  const all = dash.sessions;
+  const list = all.filter((s) => dash.filter === "all" || s.role === dash.filter);
+  $("d-empty").hidden = all.length > 0;
+  const figs = [
+    ["Episodes", list.length], ["Expert demos", list.filter((s) => s.role === "expert").length],
+    ["Guided attempts", list.filter((s) => s.role !== "expert").length], ["Mistakes caught", list.reduce((a, s) => a + s.mistakes, 0)],
+  ];
+  $("d-figs").innerHTML = figs.map(([l]) => `<div class="fig"><div class="v">0</div><div class="l">${l}</div></div>`).join("");
+  $("d-figs").querySelectorAll(".v").forEach((el, i) => countUp(el, figs[i][1]));
+
+  const ordered = [...list].sort((a, b) => (a.started || 0) - (b.started || 0));
+  $("d-strip").innerHTML = ordered.map((s) => `<button class="${s.role === "expert" ? "expert" : ""} ${s.mistakes ? "m" : ""}" data-id="${s.id}" title="${esc(s.procedure_title)}"></button>`).join("");
+  $("d-strip").querySelectorAll("button").forEach((b) => (b.onclick = () => openEpisode(b.dataset.id)));
+
+  $("d-tasks").innerHTML = dash.procs.map((p) => {
+    const eps = all.filter((s) => s.procedure_id === p.id && s.role !== "expert").sort((a, b) => a.started - b.started);
+    const pts = eps.map((s, i) => [eps.length > 1 ? (i / (eps.length - 1)) * 60 + 2 : 32, 18 - Math.min(16, s.mistakes * 4)]);
+    const spark = pts.length ? `<svg class="spark" viewBox="0 0 64 20"><path d="M${pts.map((q) => q.join(" ")).join(" L")}"/></svg>` : `<svg class="spark"></svg>`;
+    return `<button class="row" data-id="${p.id}">
+      <div class="grow"><div class="t">${esc(p.title)}</div><div class="s">${esc(p.hardware || "")}</div></div>
+      ${spark}<div class="meta">${p.steps} steps<br>${p.episodes} episodes</div></button>`;
+  }).join("");
+  $("d-tasks").querySelectorAll(".row").forEach((b) => (b.onclick = () => openTask(b.dataset.id)));
+}
+
+$("d-task-back").onclick = () => { $("d-task").hidden = true; $("d-overview").hidden = false; };
+$("d-ep-back").onclick = () => { $("d-ep").hidden = true; (dash.fromTask ? $("d-task") : $("d-overview")).hidden = false; };
+$("d-empty-rec").onclick = () => openDetails();
+
+const stepMistakes = (s) => {
+  const spoken = s.events.filter((e) => e.type === "mistake_spoken");
+  const newFormat = spoken.length || s.events.some((e) => "outdated" in e);
+  return newFormat ? spoken : s.events.filter((e) => e.type === "check" && e.status === "mistake");
+};
+
+function stepDurations(s, n) {
+  const starts = s.events.filter((e) => e.type === "step_start");
+  const end = s.summary?.duration || Math.max(0, ...s.events.map((e) => e.t || 0));
+  const d = Array(n).fill(null);
+  starts.forEach((e, i) => { if (e.step < n) d[e.step] = (i + 1 < starts.length ? starts[i + 1].t : end) - e.t; });
+  return d;
+}
+
+async function openTask(pid) {
+  dash.fromTask = true;
+  $("d-overview").hidden = true; $("d-ep").hidden = true; $("d-task").hidden = false;
+  const proc = await api(`/api/procedures/${pid}`);
+  const n = proc.steps.length;
+  const sums = dash.sessions.filter((s) => s.procedure_id === pid);
+  const full = await Promise.all(sums.map((s) => api(`/api/sessions/${s.id}`)));
+  $("dt-title").textContent = proc.title;
+  $("dt-hw").textContent = proc.hardware || "";
+  const expT = proc.steps.map((s) => (s.t_end > s.t_start ? s.t_end - s.t_start : null));
+  const gui = full.filter((s) => s.role !== "expert");
+  const guiT = proc.steps.map((_, i) => {
+    const v = gui.map((s) => stepDurations(s, n)[i]).filter((x) => x != null && x > 0);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  });
+  const mist = proc.steps.map((_, i) => gui.reduce((a, s) => a + stepMistakes(s).filter((e) => e.step === i).length, 0));
+  const maxT = Math.max(1, ...expT.filter(Boolean), ...guiT.filter(Boolean));
+  const most = mist.some((m) => m > 0) ? mist.indexOf(Math.max(...mist)) : -1;
+  $("dt-map").innerHTML = proc.steps.map((s, i) => `
+    <button class="sm-step ${i === most ? "most" : ""}" data-i="${i}">
+      <img src="/api/procedures/${pid}/frame/${s.ref_frame}" alt="">
+      <div class="t">${i + 1}. ${esc(s.title)}</div>
+      <div class="sm-bar exp" style="width:${expT[i] ? (expT[i] / maxT) * 100 : 0}%"></div>
+      <div class="sm-bar gui" style="width:${guiT[i] ? (guiT[i] / maxT) * 100 : 0}%"></div>
+      <div class="m">${mist[i]} mistake${mist[i] === 1 ? "" : "s"}</div>
+    </button>`).join("");
+  const renderEps = (stepFilter) => {
+    const rows = full.filter((s) => stepFilter == null || stepMistakes(s).some((e) => e.step === stepFilter))
+      .sort((a, b) => b.started - a.started);
+    $("dt-eps").innerHTML = rows.map((s) => `
+      <button class="row" data-id="${s.id}">
+        <div class="grow"><div class="t">${s.role === "expert" ? "Expert" : "Guided"}</div>
+        <div class="s">${new Date((s.started || 0) * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · ${fmtTime(s.summary.duration || 0)}</div></div>
+        <div class="meta">${s.role === "expert" || s.completed ? "Completed" : "Stopped"}<br>${s.summary.mistakes} mistake${s.summary.mistakes === 1 ? "" : "s"}</div>
+      </button>`).join("") || `<p class="body">No episodes at this step.</p>`;
+    $("dt-eps").querySelectorAll(".row").forEach((b) => (b.onclick = () => openEpisode(b.dataset.id)));
+  };
+  $("dt-map").querySelectorAll(".sm-step").forEach((b) => (b.onclick = () => {
+    const sel = !b.classList.contains("sel");
+    $("dt-map").querySelectorAll(".sm-step").forEach((x) => x.classList.remove("sel"));
+    b.classList.toggle("sel", sel);
+    renderEps(sel ? +b.dataset.i : null);
   }));
-  if (list[0] && $("d-detail").hidden) {
-    $("d-list").querySelector(".item")?.classList.add("sel");
-    renderEpisode(list[0].id);
-  }
+  renderEps(null);
 }
 
-async function renderEpisode(sid) {
+async function openEpisode(sid, highlight = false) {
+  if (!highlight) dash.fromTask = !$("d-task").hidden;
+  $("d-overview").hidden = true; $("d-task").hidden = true; $("d-ep").hidden = false;
   const s = await api(`/api/sessions/${sid}`);
   let proc = null;
   try { proc = s.procedure_id ? await api(`/api/procedures/${s.procedure_id}`) : null; } catch {}
-  const sum = s.summary;
-  $("d-detail").hidden = false;
-  $("d-title").textContent = `${s.procedure_title || "Episode"} (${s.role === "expert" ? "expert demo" : "guided attempt"})`;
-  $("d-export").href = `/api/sessions/${sid}/export`;
-  $("d-metrics").innerHTML = [
-    ["Duration", fmtTime(sum.duration || 0)], ["Hand samples", sum.hand_samples], ["Labelled frames", sum.frames],
-    ["Mistakes caught", sum.mistakes], ["Questions", sum.questions],
-  ].map(([l, v]) => `<div class="metric"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("");
+  const sum = s.summary, dur = Math.max(1, sum.duration || 0);
+  $("de-title").textContent = `${s.procedure_title || "Episode"}`;
+  $("de-export").href = `/api/sessions/${sid}/export`;
 
-  // Step timeline from step_start events.
-  const starts = s.events.filter((e) => e.type === "step_start");
-  const end = Math.max(sum.duration || 0, ...s.events.map((e) => e.t || 0), 1);
-  const segs = starts.map((e, i) => {
-    const t1 = i + 1 < starts.length ? starts[i + 1].t : end;
-    const bad = s.events.some((x) => x.type === "check" && x.status === "mistake" && x.t >= e.t && x.t <= t1);
-    return { step: e.step, dur: Math.max(0.5, t1 - e.t), bad };
-  });
-  $("d-timeline").innerHTML = segs.map((g) => `<div class="${g.bad ? "warn" : "ok"}" style="flex:${g.dur}" title="Step ${g.step + 1}">${g.step + 1}</div>`).join("") || `<span class="muted small">No steps logged.</span>`;
-
-  drawTrajectories($("d-traj"), s.hands, proc?.steps?.length || segs.length || 1, s.role === "expert" ? segs.map((g, i) => starts[i].t) : null);
-
+  // Player: scrub through the labelled frames.
   const frames = s.frames || [];
-  $("d-frames").innerHTML = frames.slice(-36).map((f) => `
-    <figure>
-      <img loading="lazy" src="/api/sessions/${sid}/frame/${f.file}" alt="">
-      <figcaption>${f.step != null ? `step ${f.step + 1}` : ""} ${f.status ? `<span class="tag ${f.status}">${f.status}</span>` : ""}</figcaption>
-    </figure>`).join("") || `<span class="muted small">No frames.</span>`;
+  const scrub = $("de-scrub");
+  scrub.max = Math.max(0, frames.length - 1);
+  scrub.value = 0;
+  const showFrame = () => { const f = frames[+scrub.value]; $("de-frame").src = f ? `/api/sessions/${sid}/frame/${f.file}` : ""; };
+  scrub.oninput = showFrame;
+  showFrame();
+  const mistakes = stepMistakes(s);
+  $("de-ticks").innerHTML = [
+    ...s.events.filter((e) => e.type === "step_start").map((e) => `<i style="left:${(e.t / dur) * 100}%" title="Step ${e.step + 1}"></i>`),
+    ...mistakes.map((e) => `<i class="m" style="left:${(e.t / dur) * 100}%" title="Mistake"></i>`),
+  ].join("");
 
-  $("d-events").innerHTML = s.events.map((e) => {
-    const txt = e.type === "check" ? `${e.status}${e.feedback ? ": " + e.feedback : ""}${e.latency ? ` (${e.latency}s)` : ""}`
-      : e.type === "ask" ? `Q: ${e.question} A: ${e.answer}`
-      : e.title || (e.corrected ? "after correction" : "");
-    return `<div>${(e.t || 0).toFixed(1)}s  step ${(e.step ?? 0) + 1}  ${e.type}  ${esc(txt)}</div>`;
+  const steps = s.events.filter((e) => e.type === "step_start").map((e) => `${e.step + 1} · ${fmtTime(e.t)}`).join(", ");
+  const mRows = mistakes.map((e) => {
+    const fixed = s.events.find((x) => x.type === "step_done" && x.step === e.step && x.t >= e.t);
+    return `${fmtTime(e.t)} step ${e.step + 1}: ${e.feedback || "mistake"}${fixed ? ` (recovered in ${Math.round(fixed.t - e.t)} s)` : ""}`;
+  });
+  const others = s.role === "expert"
+    ? dash.sessions.filter((x) => x.procedure_id === s.procedure_id && x.role !== "expert").length
+    : null;
+  const rows = [
+    ["Episode ID", s.id], ["Type", s.role === "expert" ? "Expert demo" : "Guided attempt"], ["Task", s.procedure_title || ""],
+    ["Hardware", proc?.hardware || "Not given"], ["Duration", fmtTime(sum.duration || 0)], ["Outcome", s.role === "expert" || s.completed ? "Completed" : "Stopped"],
+    ["Steps", steps || "None logged"], ["Mistakes", mRows.length ? mRows.join("<br>") : "None"],
+    ["Questions", s.events.filter((e) => e.type === "ask").map((e) => esc(e.question)).join("<br>") || "None"],
+    ["Hand samples", (s.hands || []).length.toLocaleString()], ["Labelled frames", frames.length],
+    ["Transcript", s.transcript?.text ? esc(s.transcript.text.slice(0, 400)) + (s.transcript.text.length > 400 ? "…" : "") : "None"],
+    ["Lineage", s.role === "expert" ? `Used by ${others} guided episode${others === 1 ? "" : "s"}` : `<a href="#" id="de-lineage" class="btn text" style="padding:0;min-height:0">Expert demo ›</a>`],
+  ];
+  $("de-kv").innerHTML = rows.map(([k, v]) => `<div class="${highlight && k === "Mistakes" ? "hl" : ""}"><span>${k}</span><span>${k === "Mistakes" || k === "Questions" || k === "Lineage" || k === "Transcript" ? v : esc(v)}</span></div>`).join("");
+  $("de-lineage")?.addEventListener("click", (e) => { e.preventDefault(); openEpisode(`expert-${s.procedure_id}`); });
+  drawTrajectories($("de-traj"), s.hands || [], proc?.steps?.length || 1, s.events);
+  $("de-frames").innerHTML = frames.map((f, i) => `
+    <figure class="${f.status === "mistake" ? "m" : ""}" data-i="${i}">
+      <img loading="lazy" src="/api/sessions/${sid}/frame/${f.file}" alt="">
+      <figcaption>${f.step != null ? `Step ${f.step + 1}` : ""}${f.status ? ` · ${f.status}` : ""}</figcaption>
+    </figure>`).join("") || `<p class="body">No frames.</p>`;
+  $("de-frames").querySelectorAll("figure").forEach((el) => (el.onclick = () => { scrub.value = el.dataset.i; showFrame(); $("scr-data").scrollTo({ top: 0, behavior: "smooth" }); }));
+  $("de-events").innerHTML = s.events.filter((e) => e.type !== "check" || e.status !== "working").map((e) => {
+    const txt = e.type === "check" ? `${e.status}${e.verified ? " (verified)" : ""}${e.feedback ? ": " + e.feedback : ""}`
+      : e.type === "ask" ? `Q: ${e.question} A: ${e.answer}` : e.type === "mistake_spoken" ? `said: ${e.feedback}` : e.title || e.command || "";
+    return `<div>${fmtTime(e.t || 0)} · step ${(e.step ?? 0) + 1} · <b>${e.type.replace("_", " ")}</b> ${esc(txt)}</div>`;
   }).join("") || "No events.";
+  const raw = { ...s, hands: `${(s.hands || []).length} samples (in the export)` };
+  $("de-raw").textContent = JSON.stringify(raw, null, 2);
+  $("de-raw").hidden = true;
+  $("de-raw-btn").classList.remove("sel");
+  $("de-raw-btn").onclick = () => { $("de-raw").hidden = !$("de-raw").hidden; $("de-raw-btn").classList.toggle("sel", !$("de-raw").hidden); };
+  $("scr-data").scrollTop = 0;
 }
 
-function drawTrajectories(canvas, samples, nSteps, expertStarts) {
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width, H = canvas.height;
+// Wrist paths, one line per hand, brighter for later steps.
+function drawTrajectories(canvas, samples, nSteps, events) {
+  const ctx = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
-  const colors = ["#2f6fde", "#1d9e75", "#d85a30", "#7f77dd", "#d4537e", "#ba7517", "#378add", "#639922", "#e24b4a", "#5f5e5a"];
-  const stepOf = (smp) => {
-    if (smp.step != null) return smp.step;
-    if (!expertStarts) return 0;
-    let k = 0;
-    expertStarts.forEach((t, i) => { if (smp.t >= t) k = i; });
-    return k;
-  };
-  if (!samples?.length) {
-    ctx.fillStyle = "#888";
-    ctx.font = "14px sans-serif";
-    ctx.fillText("No hand samples in this episode", 20, 30);
+  if (!samples.length) {
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "500 22px Inter, sans-serif";
+    ctx.fillText("No hand samples in this episode", 24, 44);
     return;
   }
+  const starts = (events || []).filter((e) => e.type === "step_start");
+  const stepOf = (smp) => smp.step ?? starts.reduce((k, e) => (smp.t >= e.t ? e.step : k), 0);
   ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.85;
-  const sides = {};
-  for (const smp of samples) {
-    for (const h of smp.hands) {
-      const key = h.side || "hand";
-      const [x, y] = h.lm[0];
-      const p = [x * W, y * H, stepOf(smp)];
-      const prev = sides[key];
-      if (prev && prev[2] === p[2] && Math.hypot(p[0] - prev[0], p[1] - prev[1]) < W * 0.2) {
-        ctx.strokeStyle = colors[p[2] % colors.length];
-        ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
-      }
-      sides[key] = p;
+  const last = {};
+  for (const smp of samples) for (const h of smp.hands) {
+    const key = h.side || "hand", st = stepOf(smp);
+    const p = [h.lm[0][0] * W, h.lm[0][1] * H, st];
+    const q = last[key];
+    if (q && q[2] === st && Math.hypot(p[0] - q[0], p[1] - q[1]) < W * 0.2) {
+      ctx.strokeStyle = `rgba(255,255,255,${0.25 + 0.7 * (st / Math.max(1, nSteps - 1))})`;
+      ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
     }
+    last[key] = p;
   }
-  ctx.globalAlpha = 1;
-  ctx.font = "12px sans-serif";
-  for (let i = 0; i < Math.min(nSteps, colors.length); i++) {
-    ctx.fillStyle = colors[i];
-    ctx.fillRect(10 + i * 62, H - 20, 10, 10);
-    ctx.fillStyle = "#888";
-    ctx.fillText(`step ${i + 1}`, 24 + i * 62, H - 11);
-  }
+  ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "500 18px Inter, sans-serif";
+  ctx.fillText(`${samples.length.toLocaleString()} samples · brighter = later steps`, 20, H - 18);
 }
 
 // ---------- boot ----------
 
-window.__apprentice = { guide, rec }; // for debugging from the console
+window.__apprentice = { guide, rec };
 
 (async () => {
   try { STATUS = await api("/api/status"); } catch {}
-  const m = $("mode");
-  m.textContent = STATUS.mock ? "Demo mode (no API key)" : STATUS.tts ? "Live AI + voice" : "Live AI";
-  m.className = `pill ${STATUS.mock ? "mock" : "live"}`;
-  renderGuideList();
+  go("start");
 })();
